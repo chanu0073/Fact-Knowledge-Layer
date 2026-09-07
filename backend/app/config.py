@@ -43,6 +43,9 @@ class Settings:
     upload_dir: Path = ROOT_DIR / "data" / "uploads"
     max_upload_mb: int = int(os.getenv("MAX_UPLOAD_MB", "100"))
 
+    # Period normalisation
+    fiscal_year_start_month: int = int(os.getenv("FISCAL_START_MONTH", "4"))
+
     @property
     def database_url(self) -> str:
         return (

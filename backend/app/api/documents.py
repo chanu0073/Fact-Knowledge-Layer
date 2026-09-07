@@ -15,6 +15,7 @@ from app.models import Document
 from app.schemas import DocumentOut, UploadOut
 from app.services.extraction import extract_facts_for_document
 from app.services.ingestion import ingest_document
+from app.services.normalization import normalize_facts_for_document
 from app.utils import is_valid_uuid
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
@@ -134,3 +135,29 @@ async def extract_document(doc_id: str, session: AsyncSession = Depends(get_db))
             doc.error_message = str(exc)[:2000]
             await session.commit()
         raise HTTPException(500, f"Extraction failed: {exc}") from exc
+
+
+@router.post("/{doc_id}/normalize", response_model=DocumentOut)
+async def normalize_document(doc_id: str, session: AsyncSession = Depends(get_db)) -> Document:
+    """Canonicalise value/unit/period fields on a document's facts. Idempotent."""
+    if not is_valid_uuid(doc_id):
+        raise HTTPException(404, "Document not found")
+    doc = await session.get(Document, doc_id)
+    if not doc:
+        raise HTTPException(404, "Document not found")
+    if doc.status in ("UPLOADED", "FAILED"):
+        raise HTTPException(409, f"Document not ready for normalisation (status={doc.status})")
+
+    try:
+        await normalize_facts_for_document(session, doc)
+        await session.commit()
+        doc = await session.get(Document, doc_id)
+        return doc
+    except Exception as exc:
+        await session.rollback()
+        doc = await session.get(Document, doc_id)
+        if doc:
+            doc.status = "FAILED"
+            doc.error_message = str(exc)[:2000]
+            await session.commit()
+        raise HTTPException(500, f"Normalisation failed: {exc}") from exc
