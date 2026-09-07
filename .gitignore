@@ -28,6 +28,9 @@ backend/data/
 uploads/
 .pgdata/
 
+# Assignment files / datasets (local only)
+docs/
+
 # OS / editor
 .DS_Store
 *.swp
