@@ -11,9 +11,9 @@ LLM provider-agnostic (default Google Gemini, free tier; offline `sample` mode n
 
 - [x] Project scaffolding, Docker stack, REST skeleton with tests
 - [x] PostgreSQL + pgvector schema (documents / evidence / facts / relationships / evaluation_cases)
-- [ ] PDF ingestion → evidence store
-- [ ] LLM fact extraction + normalisation
-- [ ] Embeddings + hybrid retrieval
+- [x] PDF ingestion → evidence store
+- [x] LLM fact extraction + normalisation
+- [x] Embeddings + hybrid retrieval
 - [ ] Relationship reasoning (deterministic + LLM semantics)
 - [ ] Evaluation harness + 4 demo cases
 - [ ] Completed API + React UI
