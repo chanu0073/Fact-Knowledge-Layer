@@ -52,6 +52,12 @@ async def clean_db(test_engine):
             await conn.execute(text(f"TRUNCATE TABLE {table} RESTART IDENTITY CASCADE"))
 
 
+@pytest.fixture(autouse=True)
+def use_sample_provider(monkeypatch):
+    """Tests never touch a live LLM provider; force the deterministic sample extractor."""
+    monkeypatch.setattr(settings, "llm_provider", "sample")
+
+
 @pytest.fixture
 def test_sessionmaker(test_engine):
     return async_sessionmaker(test_engine, expire_on_commit=False)
