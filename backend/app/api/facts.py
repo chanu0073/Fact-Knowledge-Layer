@@ -7,7 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models import Document, Evidence, Fact, Relationship
-from app.schemas import EvidenceOut, FactDetailOut, FactOut, RelationshipOut
+from app.retrieval import candidate_out, retrieve_candidates
+from app.schemas import CandidateOut, EvidenceOut, FactDetailOut, FactOut, RelationshipOut
 from app.utils import is_valid_uuid
 
 router = APIRouter(prefix="/api/facts", tags=["facts"])
@@ -103,3 +104,19 @@ async def get_fact(fact_id: str, session: AsyncSession = Depends(get_db)) -> Fac
     ).scalars().all()
 
     return _fact_to_detail(fact, docs, evidence, list(rels))
+
+
+@router.get("/{fact_id}/candidates", response_model=list[CandidateOut])
+async def fact_candidates(
+    fact_id: str,
+    limit: int = Query(20, le=100),
+    session: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    """Hybrid retrieval: ranked cross-document candidates for a fact."""
+    if not is_valid_uuid(fact_id):
+        raise HTTPException(404, "Fact not found")
+    fact = await session.get(Fact, fact_id)
+    if not fact:
+        raise HTTPException(404, "Fact not found")
+    candidates = await retrieve_candidates(session, fact, limit=limit)
+    return [candidate_out(c) for c in candidates]

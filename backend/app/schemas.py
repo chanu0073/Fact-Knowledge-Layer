@@ -73,6 +73,15 @@ class FactDetailOut(FactOut):
     relationships: list["RelationshipOut"] = []
 
 
+class CandidateOut(FactOut):
+    grounding: str = ""
+    cosine_sim: Optional[float] = None
+    structural_sim: float = 0.0
+    hybrid_score: float = 0.0
+    source: str = ""
+    breakdown: dict[str, Any] = {}
+
+
 class RelationshipOut(ORMModel):
     id: str
     fact_a_id: str
