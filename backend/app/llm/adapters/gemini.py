@@ -14,7 +14,7 @@ import anyio
 from pydantic import BaseModel, Field
 
 from app.config import settings
-from app.llm.base import EvidenceBlockSpec, ExtractedFact
+from app.llm.base import EMBEDDING_DIM, EvidenceBlockSpec, ExtractedFact
 
 PROMPT_FILE = Path(__file__).resolve().parents[3] / "prompts" / "fact_extraction.txt"
 
@@ -76,3 +76,49 @@ class GeminiExtractor:
             return []
         prompt, _ = self._render(blocks)
         return (await anyio.to_thread.run_sync(self._call_sync, prompt)).facts
+
+
+class GeminiEmbedder:
+    name = "gemini"
+    dim = EMBEDDING_DIM
+    # Free tier bills *per content item* (~100 contents/minute); a batch of 100
+    # in one call burns the whole minute. Keep small so retries/backoff suffice.
+    batch_size = 20
+
+    def __init__(self, api_key: str | None = None, model: str | None = None) -> None:
+        from google import genai
+
+        self.model = model or settings.embedding_model
+        self.client = genai.Client(api_key=api_key or settings.gemini_api_key)
+
+    @staticmethod
+    def _retry_delay(exc: Exception) -> float:
+        import re
+
+        m = re.search(r"retry[^\d]{0,20}(\d+(?:\.\d+)?)\s*s", str(exc), re.IGNORECASE)
+        return float(m.group(1)) + 2.0 if m else 0.0
+
+    def _call_sync(self, texts: list[str]) -> list[list[float]]:
+        from google.genai import types
+
+        last_exc: Exception | None = None
+        # exponential backoff with explicit respect for the server's RetryInfo
+        for attempt, delay in enumerate((1.0, 3.0, 12.0, 30.0)):
+            try:
+                resp = self.client.models.embed_content(
+                    model=self.model,
+                    contents=texts,
+                    config=types.EmbedContentConfig(output_dimensionality=self.dim),
+                )
+                return [list(e.values) for e in resp.embeddings]
+            except Exception as exc:  # rate limit, 5xx
+                last_exc = exc
+                time.sleep(max(delay, self._retry_delay(exc)))
+        raise RuntimeError(f"Gemini embedding failed after retries: {last_exc}")
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        out: list[list[float]] = []
+        for i in range(0, len(texts), self.batch_size):
+            batch = texts[i : i + self.batch_size]
+            out.extend(await anyio.to_thread.run_sync(self._call_sync, batch))
+        return out

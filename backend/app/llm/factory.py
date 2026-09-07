@@ -7,8 +7,8 @@ the reviewer can run everything without credentials.
 from __future__ import annotations
 
 from app.config import settings
-from app.llm.adapters.gemini import GeminiExtractor
-from app.llm.adapters.sample import SampleExtractor
+from app.llm.adapters.gemini import GeminiEmbedder, GeminiExtractor
+from app.llm.adapters.sample import SampleEmbedder, SampleExtractor
 
 
 def get_extractor():
@@ -21,3 +21,15 @@ def get_extractor():
     elif provider in ("openai", "anthropic", "openrouter"):
         print(f"[llm] provider '{provider}' not wired yet — falling back to sample extractor")
     return SampleExtractor()
+
+
+def get_embedder():
+    """Return the configured text embedding adapter."""
+    provider = settings.embedding_provider
+    if provider == "gemini":
+        if settings.gemini_api_key:
+            return GeminiEmbedder()
+        print("[llm] GEMINI_API_KEY missing — falling back to sample embedder")
+    elif provider in ("openai", "anthropic", "openrouter"):
+        print(f"[llm] provider '{provider}' not wired yet — falling back to sample embedder")
+    return SampleEmbedder()

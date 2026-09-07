@@ -56,3 +56,21 @@ class FactExtractor(Protocol):
         from app.processing.parse import has_number
 
         return [b for b in blocks if b.evidence_type == "table" or has_number(b.content)]
+
+
+# Fixed vector width for the `facts.embedding` column (pgvector Vector(N)).
+# gemini-embedding-001 emits 3072 by default but we pin a reduced dimension
+# (Matryoshka) so an HNSW index is allowed (pgvector caps spatial indexes at
+# 2000 dims); sample mode must match whatever is configured.
+from app.config import settings
+
+EMBEDDING_DIM = settings.embedding_dim
+
+
+class Embedder(Protocol):
+    """Turns fact text into embedding vectors of width EMBEDDING_DIM."""
+
+    name: str
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        ...

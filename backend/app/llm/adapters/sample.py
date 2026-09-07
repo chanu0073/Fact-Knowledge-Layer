@@ -6,7 +6,11 @@ API key and the test suite never spends tokens.
 """
 from __future__ import annotations
 
-from app.llm.base import EvidenceBlockSpec, ExtractedFact
+import hashlib
+import math
+import re
+
+from app.llm.base import EMBEDDING_DIM, EvidenceBlockSpec, ExtractedFact
 from app.processing.parse import (
     detect_unit_and_currency,
     first_money,
@@ -17,6 +21,35 @@ from app.processing.parse import (
 )
 
 SKIP_METRICS = {"", "page number", "for the year ended"}
+
+TOKEN_RE = re.compile(r"[a-z0-9]+")
+
+
+class SampleEmbedder:
+    """Deterministic offline embedder (hashing trick, signed random projection).
+
+    Maps every alphanumeric token to a signed `EMBEDDING_DIM`-dim coordinate via md5. Text
+    that shares tokens (e.g. the same metric in two documents) gets cosine
+    neighbours, so offline candidate retrieval still works — degraded quality,
+    same wiring.
+    """
+    name = "sample"
+    dim = EMBEDDING_DIM
+    batch_size = 500
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        return [_embed_cached(t, self.dim) for t in texts]
+
+
+def _embed_cached(text: str, dim: int) -> list[float]:
+    vec = [0.0] * dim
+    for tok in TOKEN_RE.findall(text.lower()):
+        d = hashlib.md5(tok.encode("utf-8")).digest()
+        idx = int.from_bytes(d[:8], "big") % dim
+        sign = 1.0 if (d[8] & 1) == 0 else -1.0
+        vec[idx] += sign
+    norm = math.sqrt(sum(v * v for v in vec)) or 1.0
+    return [v / norm for v in vec]
 
 
 class SampleExtractor:

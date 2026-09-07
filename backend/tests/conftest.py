@@ -39,8 +39,15 @@ async def test_engine():
     engine = create_async_engine(TEST_URL, echo=False, poolclass=NullPool)
     async with engine.begin() as conn:
         await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        # Vector width changed over the milestones (3072 -> dims <= 2000 for HNSW);
+        # drop the old facts table so the model is authoritative in tests.
+        await conn.execute(text("DROP TABLE IF EXISTS facts CASCADE"))
         from app.models import Base
         await conn.run_sync(Base.metadata.create_all)
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_facts_embedding_hnsw "
+            "ON facts USING hnsw (embedding vector_cosine_ops)"
+        ))
     yield engine
     await engine.dispose()
 
@@ -54,8 +61,9 @@ async def clean_db(test_engine):
 
 @pytest.fixture(autouse=True)
 def use_sample_provider(monkeypatch):
-    """Tests never touch a live LLM provider; force the deterministic sample extractor."""
+    """Tests never touch a live LLM provider; force the deterministic adapters."""
     monkeypatch.setattr(settings, "llm_provider", "sample")
+    monkeypatch.setattr(settings, "embedding_provider", "sample")
 
 
 @pytest.fixture

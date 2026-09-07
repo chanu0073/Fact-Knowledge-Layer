@@ -29,6 +29,8 @@ from sqlalchemy import (
     JSON,
     Index,
 )
+
+from app.llm.base import EMBEDDING_DIM
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -120,7 +122,7 @@ class Fact(Base):
     raw_extraction_json: Mapped[dict] = mapped_column(JSONB, default=dict)
 
     # Embedding (pgvector). Retrieval-only.
-    embedding: Mapped[list] = mapped_column(Vector(3072), nullable=True)
+    embedding: Mapped[list] = mapped_column(Vector(EMBEDDING_DIM), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 

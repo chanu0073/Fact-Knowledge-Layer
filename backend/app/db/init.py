@@ -11,10 +11,15 @@ from app.models import Base
 
 
 async def init_db() -> None:
-    """Create pgvector extension (if missing) and all tables."""
+    """Create pgvector extension (if missing), tables, and the HNSW vector index."""
     async with engine.begin() as conn:
         await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         await conn.run_sync(Base.metadata.create_all)
+        # HNSW approximate NN index over fact embeddings (cosine). Requires pgvector >= 0.5.
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_facts_embedding_hnsw "
+            "ON facts USING hnsw (embedding vector_cosine_ops)"
+        ))
 
 
 async def main() -> None:

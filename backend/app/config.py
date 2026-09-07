@@ -25,6 +25,9 @@ class Settings:
     embedding_provider: str = os.getenv("EMBEDDING_PROVIDER", "gemini").lower()
     llm_model: str = os.getenv("LLM_MODEL", "gemini-2.5-flash")
     embedding_model: str = os.getenv("EMBEDDING_MODEL", "gemini-embedding-001")
+    # gemini-embedding-001 supports reduced dims (Matryoshka). Must be <= 2000 so
+    # an HNSW/IVFFlat pgvector index is allowed.
+    embedding_dim: int = int(os.getenv("EMBEDDING_DIM", "1536"))
 
     # Provider keys
     gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")

@@ -13,6 +13,7 @@ from app.config import settings
 from app.database import get_db
 from app.models import Document
 from app.schemas import DocumentOut, UploadOut
+from app.services.embedding import embed_document
 from app.services.extraction import extract_facts_for_document
 from app.services.ingestion import ingest_document
 from app.services.normalization import normalize_facts_for_document
@@ -161,3 +162,31 @@ async def normalize_document(doc_id: str, session: AsyncSession = Depends(get_db
             doc.error_message = str(exc)[:2000]
             await session.commit()
         raise HTTPException(500, f"Normalisation failed: {exc}") from exc
+
+
+@router.post("/{doc_id}/embed", response_model=DocumentOut)
+async def embed_document_endpoint(doc_id: str, session: AsyncSession = Depends(get_db)) -> Document:
+    """Compute + store embeddings for a document's facts. Idempotent."""
+    if not is_valid_uuid(doc_id):
+        raise HTTPException(404, "Document not found")
+    doc = await session.get(Document, doc_id)
+    if not doc:
+        raise HTTPException(404, "Document not found")
+    if doc.status in ("UPLOADED", "FAILED"):
+        raise HTTPException(409, f"Document not ready for embedding (status={doc.status})")
+
+    doc.status = "EMBEDDING"
+    await session.commit()
+    try:
+        await embed_document(session, doc)
+        await session.commit()
+        doc = await session.get(Document, doc_id)
+        return doc
+    except Exception as exc:
+        await session.rollback()
+        doc = await session.get(Document, doc_id)
+        if doc:
+            doc.status = "FAILED"
+            doc.error_message = str(exc)[:2000]
+            await session.commit()
+        raise HTTPException(500, f"Embedding failed: {exc}") from exc
