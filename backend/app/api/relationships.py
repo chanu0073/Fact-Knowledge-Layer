@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models import Fact, Relationship
 from app.schemas import FactOut, RelationshipDetailOut, RelationshipOut
+from app.utils import is_valid_uuid
 
 router = APIRouter(prefix="/api/relationships", tags=["relationships"])
 
@@ -31,6 +32,8 @@ async def list_relationships(
 
 @router.get("/{rel_id}", response_model=RelationshipDetailOut)
 async def get_relationship(rel_id: str, session: AsyncSession = Depends(get_db)) -> RelationshipDetailOut:
+    if not is_valid_uuid(rel_id):
+        raise HTTPException(404, "Relationship not found")
     rel = await session.get(Relationship, rel_id)
     if not rel:
         raise HTTPException(404, "Relationship not found")

@@ -13,6 +13,8 @@ from app.config import settings
 from app.database import get_db
 from app.models import Document
 from app.schemas import DocumentOut, UploadOut
+from app.services.ingestion import ingest_document
+from app.utils import is_valid_uuid
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
 
@@ -70,7 +72,36 @@ async def list_documents(session: AsyncSession = Depends(get_db)) -> list[Docume
 
 @router.get("/{doc_id}", response_model=DocumentOut)
 async def get_document(doc_id: str, session: AsyncSession = Depends(get_db)) -> Document:
+    if not is_valid_uuid(doc_id):
+        raise HTTPException(404, "Document not found")
     doc = await session.get(Document, doc_id)
     if not doc:
         raise HTTPException(404, "Document not found")
     return doc
+
+
+@router.post("/{doc_id}/process", response_model=DocumentOut)
+async def process_document(doc_id: str, session: AsyncSession = Depends(get_db)) -> Document:
+    """Parse a stored PDF into evidence blocks (Phase 3 ingest). Idempotent."""
+    if not is_valid_uuid(doc_id):
+        raise HTTPException(404, "Document not found")
+    doc = await session.get(Document, doc_id)
+    if not doc:
+        raise HTTPException(404, "Document not found")
+
+    doc.status = "PARSING"
+    await session.commit()
+
+    try:
+        await ingest_document(session, doc)
+        await session.commit()
+        doc = await session.get(Document, doc_id)
+        return doc
+    except Exception as exc:
+        await session.rollback()
+        doc = await session.get(Document, doc_id)
+        if doc:
+            doc.status = "FAILED"
+            doc.error_message = str(exc)[:2000]
+            await session.commit()
+        raise HTTPException(500, f"Processing failed: {exc}") from exc

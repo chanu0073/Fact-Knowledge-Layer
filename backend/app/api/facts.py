@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models import Document, Evidence, Fact, Relationship
 from app.schemas import EvidenceOut, FactDetailOut, FactOut, RelationshipOut
+from app.utils import is_valid_uuid
 
 router = APIRouter(prefix="/api/facts", tags=["facts"])
 
@@ -78,6 +79,8 @@ async def list_facts(
 
 @router.get("/{fact_id}", response_model=FactDetailOut)
 async def get_fact(fact_id: str, session: AsyncSession = Depends(get_db)) -> FactDetailOut:
+    if not is_valid_uuid(fact_id):
+        raise HTTPException(404, "Fact not found")
     fact = await session.get(Fact, fact_id)
     if not fact:
         raise HTTPException(404, "Fact not found")
