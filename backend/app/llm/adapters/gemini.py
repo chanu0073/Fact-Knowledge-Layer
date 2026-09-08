@@ -14,9 +14,10 @@ import anyio
 from pydantic import BaseModel, Field
 
 from app.config import settings
-from app.llm.base import EMBEDDING_DIM, EvidenceBlockSpec, ExtractedFact
+from app.llm.base import EMBEDDING_DIM, EvidenceBlockSpec, ExtractedFact, ReasonedConclusion
 
 PROMPT_FILE = Path(__file__).resolve().parents[3] / "prompts" / "fact_extraction.txt"
+REASON_PROMPT_FILE = Path(__file__).resolve().parents[3] / "prompts" / "relationship_reasoning.txt"
 
 
 class ExtractionResponse(BaseModel):
@@ -122,3 +123,66 @@ class GeminiEmbedder:
             batch = texts[i : i + self.batch_size]
             out.extend(await anyio.to_thread.run_sync(self._call_sync, batch))
         return out
+
+
+class GeminiReasoner:
+    """Live LLM judge for L2 — two facts + evidence → one of the 4 labels."""
+
+    name = "gemini"
+
+    def __init__(self, api_key: str | None = None, model: str | None = None) -> None:
+        from google import genai
+
+        self.model = model or settings.llm_model
+        self.client = genai.Client(api_key=api_key or settings.gemini_api_key)
+        self._prompt = REASON_PROMPT_FILE.read_text(encoding="utf-8")
+
+    def _render(self, fact_a: dict, fact_b: dict) -> str:
+        def _block(label: str, fact: dict) -> str:
+            lines = [
+                f"{label}:",
+                f"  entity: {fact.get('entity')}",
+                f"  metric: {fact.get('metric')}",
+                f"  definition: {fact.get('definition') or '-'}",
+                f"  value: {fact.get('numeric_value')} {fact.get('unit')} {fact.get('currency')} ({fact.get('raw_value')})",
+                f"  value_type: {fact.get('value_type')}",
+                f"  period: {fact.get('period_raw')} | label: {fact.get('fiscal_year_label')}",
+                f"  observation: {fact.get('observation_type')}",
+                f"  scope: {fact.get('scope')} | geography: {fact.get('geography')}",
+                "  evidence: " + " ".join(fact.get("evidence") or []) or "-",
+            ]
+            return "\n".join(lines)
+
+        return self._prompt + "\n\n=== PAIR ===\n" + _block("FACT A", fact_a) + "\n\n" + _block("FACT B", fact_b)
+
+    def _call_sync(self, prompt: str) -> ReasonedConclusion:
+        from google.genai import types
+
+        config = types.GenerateContentConfig(
+            response_mime_type="application/json",
+            response_schema=ReasonedConclusion,
+            temperature=0.1,
+            max_output_tokens=1024,
+        )
+        last_exc: Exception | None = None
+        for attempt in range(1, 5):
+            try:
+                resp = self.client.models.generate_content(
+                    model=self.model, contents=prompt, config=config
+                )
+                text = (resp.text or "{}").strip()
+                try:
+                    return ReasonedConclusion(**json.loads(text))
+                except json.JSONDecodeError:
+                    start = text.find("{")
+                    end = text.rfind("}")
+                    if start != -1 and end > start:
+                        return ReasonedConclusion(**json.loads(text[start : end + 1]))
+                    raise
+            except Exception as exc:  # rate limit, 5xx, schema hiccup
+                last_exc = exc
+                time.sleep(2 ** attempt)
+        raise RuntimeError(f"Gemini reasoning failed after retries: {last_exc}")
+
+    async def reason(self, fact_a: dict, fact_b: dict) -> ReasonedConclusion:
+        return await anyio.to_thread.run_sync(self._call_sync, self._render(fact_a, fact_b))

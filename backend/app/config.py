@@ -49,6 +49,10 @@ class Settings:
     # Period normalisation
     fiscal_year_start_month: int = int(os.getenv("FISCAL_START_MONTH", "4"))
 
+    # Relationship reasoning (Phase 8)
+    reasoning_candidate_limit: int = int(os.getenv("REASONING_CANDIDATE_LIMIT", "10"))
+    max_l2_calls: int = int(os.getenv("MAX_L2_CALLS", "50"))
+
     @property
     def database_url(self) -> str:
         return (

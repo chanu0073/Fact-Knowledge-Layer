@@ -74,3 +74,20 @@ class Embedder(Protocol):
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
         ...
+
+
+class ReasonedConclusion(BaseModel):
+    """L2 judge verdict for a single fact pair."""
+    label: str = "UNCERTAIN"  # one of the four relationship labels
+    confidence: float = 0.5
+    rationale: str = ""
+    is_synthetic: bool = False
+
+
+class RelationshipReasoner(Protocol):
+    """Judges one fact pair against the relationship labels."""
+
+    name: str
+
+    async def reason(self, fact_a: dict, fact_b: dict) -> ReasonedConclusion:
+        ...

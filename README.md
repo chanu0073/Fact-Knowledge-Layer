@@ -14,7 +14,7 @@ LLM provider-agnostic (default Google Gemini, free tier; offline `sample` mode n
 - [x] PDF ingestion → evidence store
 - [x] LLM fact extraction + normalisation
 - [x] Embeddings + hybrid retrieval
-- [ ] Relationship reasoning (deterministic + LLM semantics)
+- [x] Relationship reasoning (deterministic + LLM semantics)
 - [ ] Evaluation harness + 4 demo cases
 - [ ] Completed API + React UI
 - See `docs/PROJECT_KNOWLEDGE.md` for the full roadmap.

@@ -10,7 +10,12 @@ import hashlib
 import math
 import re
 
-from app.llm.base import EMBEDDING_DIM, EvidenceBlockSpec, ExtractedFact
+from app.llm.base import (
+    EMBEDDING_DIM,
+    EvidenceBlockSpec,
+    ExtractedFact,
+    ReasonedConclusion,
+)
 from app.processing.parse import (
     detect_unit_and_currency,
     first_money,
@@ -23,6 +28,41 @@ from app.processing.parse import (
 SKIP_METRICS = {"", "page number", "for the year ended"}
 
 TOKEN_RE = re.compile(r"[a-z0-9]+")
+
+
+class SampleReasoner:
+    """Deterministic offline L2 judge.
+
+    Mirrors the honesty of the live judge without any API call: numbers are
+    compared on a canonical scale; close-enough estimates are called consistent,
+    everything genuinely ambiguous is called UNCERTAIN. Never invents facts.
+    """
+
+    name = "sample"
+
+    async def reason(self, fact_a: dict, fact_b: dict) -> ReasonedConclusion:
+        va, vb = fact_a.get("numeric_value"), fact_b.get("numeric_value")
+        if va is None or vb is None:
+            return ReasonedConclusion(label="UNCERTAIN", confidence=0.5,
+                                      rationale="one side has no numeric value to compare.")
+        diff = abs(va - vb) / max(abs(va), abs(vb), 1e-9)
+        both_actual = {"actual", "historical"}.intersection(
+            {fact_a.get("observation_type", "").lower(), fact_b.get("observation_type", "").lower()}
+        ) == {"actual", "historical"}
+        # Loose semantic tolerance: an estimate close to an actual is consistent.
+        if diff <= 0.10:
+            rationale = (
+                f"Values {fact_a.get('raw_value')} vs {fact_b.get('raw_value')} "
+                f"differ by {diff * 100:.1f}%, within a plausible cross-document tolerance."
+            )
+            return ReasonedConclusion(label="CORROBORATES", confidence=0.7, rationale=rationale)
+        if both_actual:
+            return ReasonedConclusion(
+                label="LIKELY_CONTRADICTION", confidence=0.7,
+                rationale=f"Both claimed as actual but differ by {diff * 100:.1f}%.")
+        return ReasonedConclusion(
+            label="UNCERTAIN", confidence=0.55,
+            rationale=f"Difference ({diff * 100:.1f}%) is not explained by context currently available.")
 
 
 class SampleEmbedder:
