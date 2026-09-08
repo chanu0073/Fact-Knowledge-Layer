@@ -131,6 +131,19 @@
 }
 select { min-width: 160px; }
 
+/* Provenance breadcrumb (document → fact → evidence → verdict). */
+.trace {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  font-size: 0.9rem;
+  color: var(--muted);
+  background: var(--surface-2);
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+}
+
 .evidence-block {
   background: var(--surface-2);
   border-radius: 6px;

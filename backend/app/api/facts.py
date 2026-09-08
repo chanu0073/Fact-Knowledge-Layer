@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.common import build_fact_items
 from app.database import get_db
 from app.models import Document, Evidence, Fact, Relationship
 from app.retrieval import candidate_out, retrieve_candidates
@@ -39,6 +40,7 @@ def _fact_to_detail(fact: Fact, doc: Document, evidence: list[Evidence], rels: l
         extraction_confidence=fact.extraction_confidence,
         created_at=fact.created_at,
         document_filename=doc.filename if doc else "",
+        grounding=(fact.qualifiers or {}).get("grounding", ""),
         evidence=[EvidenceOut.model_validate(e) for e in evidence],
         relationships=[RelationshipOut.model_validate(r) for r in rels],
     )
@@ -50,10 +52,12 @@ async def list_facts(
     document_id: str | None = Query(None),
     entity: str | None = Query(None),
     metric: str | None = Query(None),
+    fiscal_year_label: str | None = Query(None),
     observation_type: str | None = Query(None),
-    limit: int = Query(200, le=1000),
+    limit: int = Query(200, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
     session: AsyncSession = Depends(get_db),
-) -> list[Fact]:
+) -> list[FactOut]:
     stmt = select(Fact)
     if document_id:
         stmt = stmt.where(Fact.document_id == document_id)
@@ -61,6 +65,8 @@ async def list_facts(
         stmt = stmt.where(Fact.entity.ilike(f"%{entity}%"))
     if metric:
         stmt = stmt.where(Fact.metric.ilike(f"%{metric}%"))
+    if fiscal_year_label:
+        stmt = stmt.where(Fact.fiscal_year_label == fiscal_year_label)
     if observation_type:
         stmt = stmt.where(Fact.observation_type == observation_type)
     if q:
@@ -73,9 +79,9 @@ async def list_facts(
                 Fact.period_raw.ilike(like),
             )
         )
-    stmt = stmt.order_by(Fact.created_at.desc()).limit(limit)
+    stmt = stmt.order_by(Fact.created_at.desc()).limit(limit).offset(offset)
     res = await session.execute(stmt)
-    return list(res.scalars().all())
+    return await build_fact_items(session, list(res.scalars().all()))
 
 
 @router.get("/{fact_id}", response_model=FactDetailOut)

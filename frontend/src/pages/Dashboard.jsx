@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import api from '../api'
+import { statusBadge, dataModeBadge } from '../utils'
 
 export default function Dashboard() {
   const [stats, setStats] = useState(null)
@@ -13,7 +14,7 @@ export default function Dashboard() {
   }, [])
 
   const cards = [
-    { label: 'Documents', value: stats?.documents ?? docs.length, route: '/upload' },
+    { label: 'Documents', value: stats?.documents ?? docs.length, route: '/documents' },
     { label: 'Facts', value: stats?.facts ?? 0, route: '/facts' },
     { label: 'Corroborations', value: stats?.relationships?.CORROBORATES ?? 0, route: '/relationships' },
     { label: 'Likely Contradictions', value: stats?.relationships?.LIKELY_CONTRADICTION ?? 0, route: '/relationships' },
@@ -21,10 +22,32 @@ export default function Dashboard() {
     { label: 'Uncertain', value: stats?.relationships?.UNCERTAIN ?? 0, route: '/relationships' },
   ]
 
+  const modes = stats?.documents_by_mode ?? {}
+  const allSample = !Object.keys(modes).some((m) => m !== 'sample')
+
   return (
     <div className="page">
       <h1>Dashboard</h1>
       <p className="muted mb">Knowledge layer overview. Relationship counts reflect pairwise comparisons between extracted facts.</p>
+      {stats && (
+        <div className="card mb">
+          <p style={{ fontSize: '0.9em', margin: 0 }}>
+            <strong>Data mode:</strong>&nbsp;
+            {stats.data_mode === 'sample'
+              ? <span className="badge badge-gray">SAMPLE / HEURISTIC</span>
+              : <span className="badge badge-amber">LIVE LLM</span>}
+            &nbsp;|&nbsp; LLM provider: {stats.provider ?? '—'} &nbsp;|&nbsp; Embedding provider: {stats.embedding_provider ?? '—'}
+          </p>
+          {Object.keys(modes).length > 0 && (
+            <p style={{ fontSize: '0.85em', margin: '0.4rem 0 0' }} className="muted">
+              Documents by mode: {Object.entries(modes).map(([m, n]) => (
+                <span key={m} style={{ marginRight: 10 }}>{dataModeBadge(m)} × {n}</span>
+              ))}
+              {allSample && Object.keys(modes).length > 0 && ' — current corpus is entirely sample/heuristic'}
+            </p>
+          )}
+        </div>
+      )}
       {error && <div className="card" style={{ color: 'var(--red)' }}>Error: {error}</div>}
       <div className="grid grid-4 mb">
         {cards.map((c) => (
@@ -43,14 +66,15 @@ export default function Dashboard() {
         ) : (
           <table className="table">
             <thead>
-              <tr><th>Filename</th><th>Pages</th><th>Status</th><th>Uploaded</th></tr>
+              <tr><th>Filename</th><th>Pages</th><th>Status</th><th>Data mode</th><th>Uploaded</th></tr>
             </thead>
             <tbody>
               {docs.map((d) => (
                 <tr key={d.id}>
-                  <td>{d.filename}</td>
+                  <td><Link to={`/documents/${d.id}`}>{d.filename}</Link></td>
                   <td>{d.page_count ?? '—'}</td>
-                  <td>{d.status ?? '—'}</td>
+                  <td>{statusBadge(d.status)}</td>
+                  <td>{dataModeBadge(d.data_mode)}</td>
                   <td className="muted">{new Date(d.created_at).toLocaleString()}</td>
                 </tr>
               ))}

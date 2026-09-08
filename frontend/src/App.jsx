@@ -1,6 +1,8 @@
 import { Routes, Route, NavLink, Navigate } from 'react-router-dom'
 import Dashboard from './pages/Dashboard.jsx'
 import Upload from './pages/Upload.jsx'
+import Documents from './pages/Documents.jsx'
+import DocumentDetail from './pages/DocumentDetail.jsx'
 import FactExplorer from './pages/FactExplorer.jsx'
 import FactDetail from './pages/FactDetail.jsx'
 import RelationshipDetail from './pages/RelationshipDetail.jsx'
@@ -18,6 +20,7 @@ export default function App() {
         <nav className="nav">
           <NavLink to="/" end>Dashboard</NavLink>
           <NavLink to="/upload">Upload</NavLink>
+          <NavLink to="/documents">Documents</NavLink>
           <NavLink to="/facts">Facts</NavLink>
           <NavLink to="/relationships">Relationships</NavLink>
           <NavLink to="/cases">Assignment Cases</NavLink>
@@ -27,6 +30,8 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/upload" element={<Upload />} />
+          <Route path="/documents" element={<Documents />} />
+          <Route path="/documents/:id" element={<DocumentDetail />} />
           <Route path="/facts" element={<FactExplorer />} />
           <Route path="/facts/:id" element={<FactDetail />} />
           <Route path="/relationships" element={<RelationshipDetail mode="list" />} />

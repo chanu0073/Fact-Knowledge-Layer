@@ -38,16 +38,11 @@ async def test_engine():
 
     engine = create_async_engine(TEST_URL, echo=False, poolclass=NullPool)
     async with engine.begin() as conn:
-        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         # Vector width changed over the milestones (3072 -> dims <= 2000 for HNSW);
         # drop the old facts table so the model is authoritative in tests.
         await conn.execute(text("DROP TABLE IF EXISTS facts CASCADE"))
-        from app.models import Base
-        await conn.run_sync(Base.metadata.create_all)
-        await conn.execute(text(
-            "CREATE INDEX IF NOT EXISTS ix_facts_embedding_hnsw "
-            "ON facts USING hnsw (embedding vector_cosine_ops)"
-        ))
+        from app.db.init import apply_migrations
+        await apply_migrations(conn)
     yield engine
     await engine.dispose()
 
@@ -81,8 +76,13 @@ async def client(test_sessionmaker):
             yield session
 
     app.dependency_overrides[get_db] = _override
+    # Background jobs (aggregate pipeline) resolve their own session maker;
+    # point it at the test database so tests stay isolated.
+    from app.database import SessionLocal
+    app.state.sessionmaker = test_sessionmaker
 
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
     app.dependency_overrides.clear()
+    app.state.sessionmaker = SessionLocal

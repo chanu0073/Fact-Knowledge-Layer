@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import api from '../api'
-import { relBadge, fmtValue } from '../utils'
+import { relBadge, fmtValue, groundingBadge } from '../utils'
 
 export default function FactDetail() {
   const { id } = useParams()
@@ -22,11 +22,21 @@ export default function FactDetail() {
     ['Geography', fact.geography || '—'],
     ['Confidence', fact.extraction_confidence != null ? Math.round(fact.extraction_confidence * 100) + '%' : '—'],
   ]
+  const qualifiers = fact.qualifiers && Object.keys(fact.qualifiers).length ? fact.qualifiers : null
 
   return (
     <div className="page">
       <Link to="/facts" className="muted">← Back to facts</Link>
-      <h1 className="mt">Fact</h1>
+      <div className="trace mt">
+        <span><Link to={`/documents/${fact.document_id}`}>{fact.document_filename || 'Document'}</Link></span>
+        <span>→</span>
+        <span>Evidence blocks ({fact.evidence?.length ?? 0})</span>
+        <span>→</span>
+        <span>Fact</span>
+        <span>→</span>
+        <span>Verdicts ({fact.relationships?.length ?? 0})</span>
+      </div>
+      <h1 className="mt">Fact {groundingBadge(fact.grounding)}</h1>
       <div className="grid grid-2">
         <div className="card">
           <h3>{fact.entity} — {fact.metric}</h3>
@@ -35,6 +45,9 @@ export default function FactDetail() {
               {rows.map(([k, v]) => (
                 <tr key={k}><th style={{ width: 160 }}>{k}</th><td>{v || '—'}</td></tr>
               ))}
+              {qualifiers && (
+                <tr><th>Qualifiers</th><td><pre className="evidence-pre">{JSON.stringify(qualifiers, null, 2)}</pre></td></tr>
+              )}
             </tbody>
           </table>
         </div>
@@ -44,7 +57,7 @@ export default function FactDetail() {
           {!fact.evidence?.length ? <p className="muted">No evidence recorded.</p> : fact.evidence.map((ev) => (
             <div key={ev.id} className="evidence-block">
               <div className="muted" style={{ fontSize: '0.8rem' }}>
-                {fact.document_filename} · p.{ev.page_number} · {ev.evidence_type}
+                {fact.document_filename} · p.{ev.page_number} · block #{ev.block_index} · {ev.evidence_type}
               </div>
               <pre className="evidence-pre">{ev.content}</pre>
             </div>

@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react'
+import { Link } from 'react-router-dom'
 import api from '../api'
-import { statusBadge } from '../utils'
+import { statusBadge, dataModeBadge } from '../utils'
 
 export default function Upload() {
   const [files, setFiles] = useState([])
@@ -65,10 +66,12 @@ export default function Upload() {
             {result.map((r) => r.documents?.map((d) => (
               <div key={d.id} className="flex">
                 <span>{d.filename}</span>
+                <span>{dataModeBadge(d.data_mode)}</span>
                 <span>{statusBadge(d.status)}</span>
+                <Link to={`/documents/${d.id}`} style={{ marginLeft: 8 }}>Open →</Link>
               </div>
             )))}
-            <p className="muted">Refresh the Dashboard or Facts page to see processing progress.</p>
+            <p className="muted">Run the full pipeline from the document page, or via the script.</p>
           </div>
         )}
       </div>

@@ -20,6 +20,9 @@ async def lifespan(app: FastAPI):
         await init_db()
     except Exception as exc:  # DB may be starting; surfaced by /health
         print(f"[warn] schema init skipped: {exc}")
+    # Backend jobs (e.g. the aggregate pipeline) resolve their own session
+    # through this maker; tests override it with the test database's maker.
+    app.state.sessionmaker = SessionLocal
     yield
 
 
@@ -32,6 +35,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+from app.api.errors import register_error_handlers
+
+register_error_handlers(app)
+app.state.sessionmaker = SessionLocal
 
 app.include_router(system.router)
 app.include_router(documents.router)

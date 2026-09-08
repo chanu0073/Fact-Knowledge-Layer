@@ -23,13 +23,19 @@ export const api = {
       return r.json()
     })
   },
-  documents: () => request('/api/documents'),
+  documents: (params = {}) => request(`/api/documents${params ? `?${new URLSearchParams(params)}` : ''}`),
   document: (id) => request(`/api/documents/${id}`),
+  documentEvidence: (id, params = {}) => request(`/api/documents/${id}/evidence?${new URLSearchParams(params)}`),
+  documentFacts: (id, params = {}) => request(`/api/documents/${id}/facts?${new URLSearchParams(params)}`),
+  documentLogs: (id) => request(`/api/documents/${id}/logs`),
+  runPipeline: (id) => request(`/api/documents/${id}/pipeline`, { method: 'POST' }),
   facts: (params = {}) => request(`/api/facts?${new URLSearchParams(params)}`),
   fact: (id) => request(`/api/facts/${id}`),
   relationships: (params = {}) => request(`/api/relationships?${new URLSearchParams(params)}`),
   relationship: (id) => request(`/api/relationships/${id}`),
   cases: () => request('/api/evaluation/cases'),
+  evaluationResults: () => request('/api/evaluation/results'),
+  runEvaluation: () => request('/api/evaluation/run', { method: 'POST' }),
   stats: () => request('/api/stats'),
 }
 

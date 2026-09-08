@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import api from '../api'
-import { fmtValue } from '../utils'
+import { fmtValue, groundingBadge } from '../utils'
 
 export default function FactExplorer() {
+  const [params] = useSearchParams()
   const [facts, setFacts] = useState([])
   const [docs, setDocs] = useState([])
   const [q, setQ] = useState('')
-  const [docId, setDocId] = useState('')
+  const [docId, setDocId] = useState(params.get('document_id') || '')
   const [type, setType] = useState('')
   const [loading, setLoading] = useState(true)
 
@@ -15,11 +16,11 @@ export default function FactExplorer() {
 
   useEffect(() => {
     setLoading(true)
-    const params = {}
-    if (q) params.q = q
-    if (docId) params.document_id = docId
-    if (type) params.observation_type = type
-    api.facts(params).then(setFacts).catch(() => setFacts([])).finally(() => setLoading(false))
+    const p = {}
+    if (q) p.q = q
+    if (docId) p.document_id = docId
+    if (type) p.observation_type = type
+    api.facts(p).then(setFacts).catch(() => setFacts([])).finally(() => setLoading(false))
   }, [q, docId, type])
 
   return (
@@ -47,7 +48,7 @@ export default function FactExplorer() {
         ) : (
           <table className="table">
             <thead>
-              <tr><th>Entity</th><th>Metric</th><th>Value</th><th>Period</th><th>Scope</th><th>Type</th><th>Conf.</th><th>Source</th></tr>
+              <tr><th>Entity</th><th>Metric</th><th>Value</th><th>Period</th><th>Scope</th><th>Type</th><th>Conf.</th><th>Source</th><th>Grounding</th></tr>
             </thead>
             <tbody>
               {facts.map((f) => (
@@ -59,7 +60,8 @@ export default function FactExplorer() {
                   <td>{f.scope || '—'}</td>
                   <td>{f.observation_type || '—'}</td>
                   <td>{f.extraction_confidence != null ? Math.round(f.extraction_confidence * 100) + '%' : '—'}</td>
-                  <td className="muted">{f.document_filename || ''} p.{f.page_number ?? ''}</td>
+                  <td className="muted">{f.document_filename ? `${f.document_filename} p.${f.page_number ?? '?'}` : '—'}</td>
+                  <td>{groundingBadge(f.grounding)}</td>
                 </tr>
               ))}
             </tbody>

@@ -58,6 +58,10 @@ class Document(Base):
     page_count: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String(32), default="UPLOADED")
     error_message: Mapped[str] = mapped_column(Text, default="")
+    # Data provenance/mode: which extractor/embedder produced this document's
+    # facts. sample | live-llm | fixture — never conflated in the UI/stats.
+    data_mode: Mapped[str] = mapped_column(String(16), default="sample")
+    provider: Mapped[str] = mapped_column(String(32), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
 

@@ -73,6 +73,16 @@ class Settings:
         return self.database_url.replace("postgresql+asyncpg://", "postgresql://")
 
     @property
+    def data_mode(self) -> str:
+        """Source of the corpus facts: sample/heuristic or a live LLM provider.
+
+        A batch produced by a live provider is 'live-llm'; fully heuristic runs
+        are 'sample'. The two are never silently mixed: each document row stores
+        the mode in effect when it was created.
+        """
+        return "sample" if self.llm_provider == "sample" or self.embedding_provider == "sample" else "live-llm"
+
+    @property
     def llm_enabled(self) -> bool:
         """True when a real provider key is configured (not sample mode)."""
         keys = {
