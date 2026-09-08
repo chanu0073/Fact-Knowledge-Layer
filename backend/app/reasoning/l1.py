@@ -65,6 +65,12 @@ def _is_nonactual(fact: Fact) -> bool:
     return (fact.observation_type or "").lower() in OBS_NONACTUAL
 
 
+def _period_span_days(fact: Fact) -> int | None:
+    if not fact.period_start or not fact.period_end:
+        return None
+    return (fact.period_end - fact.period_start).days
+
+
 def _periods_overlap(a: Fact, b: Fact) -> bool | None:
     """True/False when both windows are known; label-equality fallback; else None."""
     if a.period_start and a.period_end and b.period_start and b.period_end:
@@ -123,6 +129,17 @@ def reason_pair(a: Fact, b: Fact) -> L1Verdict:
     both_actual = _is_actual(a) and _is_actual(b)
     nonactual_mix = _is_nonactual(a) or _is_nonactual(b)
     unit_note = f"{scale_label} (Δ{diff * 100:.2f}%)"
+
+    # Partial-period vs full-period (e.g. 9M FY25 vs FY25) is a category error
+    # that typically comes from multi-period table column mis-association
+    # (the assignment's Case 4). Refuse to declare either way -> UNCERTAIN.
+    span_a, span_b = _period_span_days(a), _period_span_days(b)
+    if overlap is True and span_a is not None and span_b is not None and (span_a < 330) != (span_b < 330):
+        reasons.append(
+            f"period scopes differ (partial vs full: {a.period_type or '?'} vs {b.period_type or '?'}) — "
+            "values are not directly comparable (possible column/period mis-association)"
+        )
+        return L1Verdict(UNCERTAIN, 0.5, MODERATE, reasons, periods_overlap=True)
 
     if diff <= TOLERANCE:
         reasons.append(f"values within tolerance in {unit_note}; {a.raw_value!r} ≈ {b.raw_value!r}")

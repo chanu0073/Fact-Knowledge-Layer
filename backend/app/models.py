@@ -28,6 +28,7 @@ from sqlalchemy import (
     Text,
     JSON,
     Index,
+    event,
 )
 
 from app.llm.base import EMBEDDING_DIM
@@ -128,6 +129,25 @@ class Fact(Base):
 
     def __repr__(self) -> str:
         return f"<Fact {self.entity} {self.metric} {self.raw_value} {self.period_raw}>"
+
+
+# Free-form extractor strings must never exceed column widths, no matter which
+# path created the object (live/sample extraction, fixtures, scripts).
+_FACT_LENGTH_LIMITS = {"entity": 512, "metric": 512, "raw_value": 256, "unit": 64,
+                       "currency": 16, "period_raw": 128, "observation_type": 24,
+                       "value_type": 24, "scope": 64, "geography": 64,
+                       "fiscal_year_label": 24}
+
+
+def _clamp_fact_lengths(_mapper, _connection, target: Fact) -> None:
+    for attr, limit in _FACT_LENGTH_LIMITS.items():
+        value = getattr(target, attr, None)
+        if isinstance(value, str) and len(value) > limit:
+            setattr(target, attr, value[:limit])
+
+
+event.listen(Fact, "before_insert", _clamp_fact_lengths)
+event.listen(Fact, "before_update", _clamp_fact_lengths)
 
 
 class Relationship(Base):

@@ -42,6 +42,10 @@ class ExtractedFact(BaseModel):
     source_block_indices: list[int] = Field(default_factory=list)
 
 
+class ExtractionResponse(BaseModel):
+    facts: list[ExtractedFact] = Field(default_factory=list)
+
+
 class FactExtractor(Protocol):
     """Turns evidence blocks into extraction candidates."""
 
@@ -90,4 +94,34 @@ class RelationshipReasoner(Protocol):
     name: str
 
     async def reason(self, fact_a: dict, fact_b: dict) -> ReasonedConclusion:
+        ...
+
+
+class LLMProvider(Protocol):
+    """Unified LLM backing for extraction and L2 reasoning.
+
+    Concrete: ``GeminiProvider``, ``OllamaProvider``, ``SampleProvider``.
+    Chosen via ``LLM_PROVIDER`` env; the pipeline only ever sees this protocol.
+    """
+
+    name: str
+
+    async def extract(self, blocks: list[EvidenceBlockSpec]) -> list[ExtractedFact]:
+        ...
+
+    async def reason(self, fact_a: dict, fact_b: dict) -> ReasonedConclusion:
+        ...
+
+
+class EmbeddingProvider(Protocol):
+    """Text embedding backing (``facts.embedding`` of width ``EMBEDDING_DIM``).
+
+    Concrete: ``GeminiEmbeddingProvider``, ``LocalEmbeddingProvider``,
+    ``SampleEmbedder``. Chosen via ``EMBEDDING_PROVIDER`` env.
+    """
+
+    name: str
+    dim: int
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
         ...

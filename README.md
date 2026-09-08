@@ -41,7 +41,7 @@ cd ../backend
 POSTGRES_HOST=localhost .venv/bin/python -m pytest
 ```
 
-Environment: `LLM_PROVIDER` / `EMBEDDING_PROVIDER` (`gemini | openai | anthropic | openrouter | sample`),
+Environment: `LLM_PROVIDER` / `EMBEDDING_PROVIDER` (`gemini | ollama | sample`),
 model names, and Postgres credentials — all in `.env` (never committed).
 
 ## Demo
@@ -61,8 +61,9 @@ model names, and Postgres credentials — all in `.env` (never committed).
 3. **Retrieval ≠ reasoning:** pgvector similarity finds *candidate* fact pairs; the verdict comes from layered
    reasoning — L1 deterministic checks (entity/metric/period/scope/value after normalisation) → L2 LLM semantics
    for ambiguity → L3 final decision. `UNCERTAIN` beats a confident guess.
-4. **Provider abstraction:** `FactExtractor` / `RelationshipReasoner` / `Embedder` protocols with Gemini and offline
-   `sample` adapters, so the full pipeline runs with or without an API key.
+4. **Provider abstraction:** `GeminiProvider` / `OllamaProvider` (`LLMProvider`) and `GeminiEmbeddingProvider` /
+   `LocalEmbeddingProvider` (`EmbeddingProvider`), selected via env and backed by a deterministic `sample` adapter,
+   so the full pipeline runs with or without an API key — the core layers have zero provider code.
 
 Detailed design + every decision and its alternatives: `docs/` (ARCHITECTURE.md, DATA_MODEL.md, API.md,
 DECISIONS.md, EVALUATION.md, FAILURE_ANALYSIS.md, LEARNING_NOTES.md, INTERVIEW_PREP.md).

@@ -1,111 +1,133 @@
-"""Gemini-backed extractor (live API).
+"""Gemini-backed providers (live API, the target high-fidelity path).
 
-Uses ``google-genai`` (sync client) with a JSON response schema. The call is
-CPU/I/O-bound so callers drive it via ``anyio.to_thread``. Free-tier friendly:
-small retry/backoff on rate limits, and clients are expected to batch by page.
+Selected via ``LLM_PROVIDER=gemini`` / ``EMBEDDING_PROVIDER=gemini``.
+Uses ``google-genai`` (sync client); calls are CPU/I/O-bound so they run via
+``anyio.to_thread``. Free-tier friendly: every call path is paced with a
+minimum interval and retries that honour the server's RetryInfo seconds.
+No ``response_schema`` is passed: the Gemini API rejects schemas carrying
+pydantic defaults, and the structured JSON output is enforced by the prompt +
+``response_mime_type`` and parsed back into the pydantic models.
 """
 from __future__ import annotations
 
-import json
 import time
 from pathlib import Path
 
 import anyio
-from pydantic import BaseModel, Field
+from google import genai
 
 from app.config import settings
-from app.llm.base import EMBEDDING_DIM, EvidenceBlockSpec, ExtractedFact, ReasonedConclusion
+from app.llm.base import (
+    EMBEDDING_DIM,
+    EvidenceBlockSpec,
+    ExtractedFact,
+    ReasonedConclusion,
+)
+from app.llm.render import (
+    parse_conclusion,
+    parse_extraction,
+    render_extraction_prompt,
+    render_reasoning_prompt,
+)
 
 PROMPT_FILE = Path(__file__).resolve().parents[3] / "prompts" / "fact_extraction.txt"
 REASON_PROMPT_FILE = Path(__file__).resolve().parents[3] / "prompts" / "relationship_reasoning.txt"
 
 
-class ExtractionResponse(BaseModel):
-    facts: list[ExtractedFact] = Field(default_factory=list)
+def _retry_seconds(exc: Exception) -> float:
+    """Server-provided 'retry ... s' (RetryInfo) if the error carries one."""
+    import re
+
+    m = re.search(r"retry[^\d]{0,20}(\d+(?:\.\d+)?)\s*s", str(exc), re.IGNORECASE)
+    return float(m.group(1)) + 2.0 if m else 0.0
 
 
-class GeminiExtractor:
+class _Pacer:
+    """Minimum spacing between live API calls (free-tier friendly)."""
+
+    _last: float = 0.0
+
+    def __init__(self, min_interval: float = 7.0) -> None:
+        self.min_interval = min_interval
+
+    def wait(self) -> None:
+        elapsed = time.monotonic() - type(self)._last
+        if elapsed < self.min_interval:
+            time.sleep(self.min_interval - elapsed)
+        type(self)._last = time.monotonic()
+
+
+class GeminiProvider:
+    """LLMProvider: structured fact extraction + L2 relationship judging."""
+
     name = "gemini"
 
     def __init__(self, api_key: str | None = None, model: str | None = None) -> None:
-        from google import genai
-
         self.model = model or settings.llm_model
         self.client = genai.Client(api_key=api_key or settings.gemini_api_key)
         self._prompt = PROMPT_FILE.read_text(encoding="utf-8")
+        self._reason_prompt = REASON_PROMPT_FILE.read_text(encoding="utf-8")
+        self._pacer = _Pacer()
 
-    def _render(self, blocks: list[EvidenceBlockSpec]) -> tuple[str, list[str]]:
-        """Return (prompt, ordering of evidence ids via block.index)."""
-        lines = [
-            f"[{b.index}] page {b.page_number} ({b.evidence_type})\n{b.content}"
-            for b in blocks
-        ]
-        return self._prompt + "\n\n=== EVIDENCE ===\n" + "\n\n".join(lines), []
-
-    def _call_sync(self, prompt: str) -> ExtractionResponse:
+    def _call_sync(self, prompt: str, prompt_name: str, max_tokens: int):
         from google.genai import types
 
         config = types.GenerateContentConfig(
             response_mime_type="application/json",
-            response_schema=ExtractionResponse,
             temperature=0.1,
-            max_output_tokens=4096,
+            max_output_tokens=max_tokens,
         )
         last_exc: Exception | None = None
-        for attempt in range(1, 5):
+        for delay in (5.0, 12.0, 30.0, 60.0, 90.0):
             try:
+                self._pacer.wait()
                 resp = self.client.models.generate_content(
                     model=self.model, contents=prompt, config=config
                 )
-                text = (resp.text or "{}").strip()
-                # Some models ignore response_schema; fall back to lenient parsing.
-                try:
-                    return ExtractionResponse(**json.loads(text))
-                except json.JSONDecodeError:
-                    start = text.find("{")
-                    end = text.rfind("}")
-                    if start != -1 and end > start:
-                        return ExtractionResponse(**json.loads(text[start : end + 1]))
-                    raise
+                return resp.text
             except Exception as exc:  # rate limit, 5xx, schema hiccup
                 last_exc = exc
-                time.sleep(2 ** attempt)
-        raise RuntimeError(f"Gemini extraction failed after retries: {last_exc}")
+                time.sleep(max(delay, _retry_seconds(exc)))
+        raise RuntimeError(f"Gemini {prompt_name} failed after retries: {last_exc}")
 
     async def extract(self, blocks: list[EvidenceBlockSpec]) -> list[ExtractedFact]:
         if not blocks:
             return []
-        prompt, _ = self._render(blocks)
-        return (await anyio.to_thread.run_sync(self._call_sync, prompt)).facts
+        prompt = render_extraction_prompt(self._prompt, blocks)
+        text = await anyio.to_thread.run_sync(
+            lambda: self._call_sync(prompt, "extraction", 4096)
+        )
+        return parse_extraction(text)
+
+    async def reason(self, fact_a: dict, fact_b: dict) -> ReasonedConclusion:
+        prompt = render_reasoning_prompt(self._reason_prompt, fact_a, fact_b)
+        text = await anyio.to_thread.run_sync(
+            lambda: self._call_sync(prompt, "reasoning", 1024)
+        )
+        return parse_conclusion(text)
 
 
-class GeminiEmbedder:
+class GeminiEmbeddingProvider:
+    """EmbeddingProvider: gemini-embedding-001 at EMBEDDING_DIM (Matryoshka)."""
+
     name = "gemini"
     dim = EMBEDDING_DIM
-    # Free tier bills *per content item* (~100 contents/minute); a batch of 100
-    # in one call burns the whole minute. Keep small so retries/backoff suffice.
+    # Free tier bills *per content item* (~100 contents/minute); keep batches
+    # small so retries/backoff suffice.
     batch_size = 20
 
     def __init__(self, api_key: str | None = None, model: str | None = None) -> None:
-        from google import genai
-
         self.model = model or settings.embedding_model
         self.client = genai.Client(api_key=api_key or settings.gemini_api_key)
-
-    @staticmethod
-    def _retry_delay(exc: Exception) -> float:
-        import re
-
-        m = re.search(r"retry[^\d]{0,20}(\d+(?:\.\d+)?)\s*s", str(exc), re.IGNORECASE)
-        return float(m.group(1)) + 2.0 if m else 0.0
+        self._pacer = _Pacer(min_interval=3.0)
 
     def _call_sync(self, texts: list[str]) -> list[list[float]]:
         from google.genai import types
 
         last_exc: Exception | None = None
-        # exponential backoff with explicit respect for the server's RetryInfo
-        for attempt, delay in enumerate((1.0, 3.0, 12.0, 30.0)):
+        for delay in (1.0, 3.0, 12.0, 30.0, 60.0):
             try:
+                self._pacer.wait()
                 resp = self.client.models.embed_content(
                     model=self.model,
                     contents=texts,
@@ -114,75 +136,18 @@ class GeminiEmbedder:
                 return [list(e.values) for e in resp.embeddings]
             except Exception as exc:  # rate limit, 5xx
                 last_exc = exc
-                time.sleep(max(delay, self._retry_delay(exc)))
+                time.sleep(max(delay, _retry_seconds(exc)))
         raise RuntimeError(f"Gemini embedding failed after retries: {last_exc}")
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
         out: list[list[float]] = []
-        for i in range(0, len(texts), self.batch_size):
-            batch = texts[i : i + self.batch_size]
+        for start in range(0, len(texts), self.batch_size):
+            batch = texts[start : start + self.batch_size]
             out.extend(await anyio.to_thread.run_sync(self._call_sync, batch))
         return out
 
 
-class GeminiReasoner:
-    """Live LLM judge for L2 — two facts + evidence → one of the 4 labels."""
-
-    name = "gemini"
-
-    def __init__(self, api_key: str | None = None, model: str | None = None) -> None:
-        from google import genai
-
-        self.model = model or settings.llm_model
-        self.client = genai.Client(api_key=api_key or settings.gemini_api_key)
-        self._prompt = REASON_PROMPT_FILE.read_text(encoding="utf-8")
-
-    def _render(self, fact_a: dict, fact_b: dict) -> str:
-        def _block(label: str, fact: dict) -> str:
-            lines = [
-                f"{label}:",
-                f"  entity: {fact.get('entity')}",
-                f"  metric: {fact.get('metric')}",
-                f"  definition: {fact.get('definition') or '-'}",
-                f"  value: {fact.get('numeric_value')} {fact.get('unit')} {fact.get('currency')} ({fact.get('raw_value')})",
-                f"  value_type: {fact.get('value_type')}",
-                f"  period: {fact.get('period_raw')} | label: {fact.get('fiscal_year_label')}",
-                f"  observation: {fact.get('observation_type')}",
-                f"  scope: {fact.get('scope')} | geography: {fact.get('geography')}",
-                "  evidence: " + " ".join(fact.get("evidence") or []) or "-",
-            ]
-            return "\n".join(lines)
-
-        return self._prompt + "\n\n=== PAIR ===\n" + _block("FACT A", fact_a) + "\n\n" + _block("FACT B", fact_b)
-
-    def _call_sync(self, prompt: str) -> ReasonedConclusion:
-        from google.genai import types
-
-        config = types.GenerateContentConfig(
-            response_mime_type="application/json",
-            response_schema=ReasonedConclusion,
-            temperature=0.1,
-            max_output_tokens=1024,
-        )
-        last_exc: Exception | None = None
-        for attempt in range(1, 5):
-            try:
-                resp = self.client.models.generate_content(
-                    model=self.model, contents=prompt, config=config
-                )
-                text = (resp.text or "{}").strip()
-                try:
-                    return ReasonedConclusion(**json.loads(text))
-                except json.JSONDecodeError:
-                    start = text.find("{")
-                    end = text.rfind("}")
-                    if start != -1 and end > start:
-                        return ReasonedConclusion(**json.loads(text[start : end + 1]))
-                    raise
-            except Exception as exc:  # rate limit, 5xx, schema hiccup
-                last_exc = exc
-                time.sleep(2 ** attempt)
-        raise RuntimeError(f"Gemini reasoning failed after retries: {last_exc}")
-
-    async def reason(self, fact_a: dict, fact_b: dict) -> ReasonedConclusion:
-        return await anyio.to_thread.run_sync(self._call_sync, self._render(fact_a, fact_b))
+# Backwards-compatible aliases (older code/tests referenced the granular names).
+GeminiExtractor = GeminiProvider
+GeminiReasoner = GeminiProvider
+GeminiEmbedder = GeminiEmbeddingProvider

@@ -15,8 +15,22 @@ from app.normalize import parse_numeric_value, parse_period, percent_of
 from app.processing.parse import detect_unit_and_currency
 
 
+_MAX = {"entity": 512, "metric": 512, "raw_value": 256, "unit": 64,
+        "currency": 16, "period_raw": 128, "observation_type": 24,
+        "value_type": 24, "scope": 64, "geography": 64}
+
+
+def _clamp_lengths(fact: Fact) -> None:
+    """Defensive: keep free-form extractor strings inside column widths."""
+    for attr, limit in _MAX.items():
+        value = getattr(fact, attr)
+        if value is not None and len(value) > limit:
+            setattr(fact, attr, value[:limit])
+
+
 def apply_normalization(fact: Fact) -> dict[str, bool]:
     """Canonicalise one fact in place. Returns which fields changed."""
+    _clamp_lengths(fact)
     changed = {
         "numeric": False, "unit": False, "value_type": False,
         "period": False, "label": False,

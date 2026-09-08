@@ -23,7 +23,7 @@ class Settings:
     # LLM / embeddings provider abstraction
     llm_provider: str = os.getenv("LLM_PROVIDER", "gemini").lower()
     embedding_provider: str = os.getenv("EMBEDDING_PROVIDER", "gemini").lower()
-    llm_model: str = os.getenv("LLM_MODEL", "gemini-2.5-flash")
+    llm_model: str = os.getenv("LLM_MODEL", "gemini-3.6-flash")
     embedding_model: str = os.getenv("EMBEDDING_MODEL", "gemini-embedding-001")
     # gemini-embedding-001 supports reduced dims (Matryoshka). Must be <= 2000 so
     # an HNSW/IVFFlat pgvector index is allowed.
@@ -52,6 +52,13 @@ class Settings:
     # Relationship reasoning (Phase 8)
     reasoning_candidate_limit: int = int(os.getenv("REASONING_CANDIDATE_LIMIT", "10"))
     max_l2_calls: int = int(os.getenv("MAX_L2_CALLS", "50"))
+
+    # Local Ollama provider (LLM + embeddings) — offline dev/fallback.
+    # qwen3:4b Q4 fits the 4 GB laptop GPU; nomic-embed-text is 768-dim and is
+    # zero-padded to embedding_dim for the fixed-width pgvector column.
+    ollama_url: str = os.getenv("OLLAMA_URL", "http://localhost:11434")
+    ollama_model: str = os.getenv("OLLAMA_MODEL", "qwen3:4b")
+    ollama_embedding_model: str = os.getenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")
 
     @property
     def database_url(self) -> str:

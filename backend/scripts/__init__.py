@@ -1,0 +1,1 @@
+"""CLI helpers (run with ``python -m scripts.*``)."""
