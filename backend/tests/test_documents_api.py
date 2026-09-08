@@ -5,7 +5,11 @@ import asyncio
 import io
 from pathlib import Path
 
-from app.models import Document
+from sqlalchemy import select
+
+from app.config import settings
+from app.models import Document, ProcessingLog
+from app.services.pipeline import run_pipeline_task
 
 DECK = Path(__file__).resolve().parents[2] / "docs" / "assignment files" / "starter-datasets" / "delhivery" / "03-delhivery-q4-fy24-earnings-presentation.pdf"
 needs_dataset = __import__("pytest").mark.skipif(
@@ -113,15 +117,32 @@ async def test_pipeline_background_lifecycle(client, test_sessionmaker):
 
 
 async def test_pipeline_conflict_while_running(client, test_sessionmaker):
-    async with test_sessionmaker() as session:
-        doc = Document(filename="busy.pdf", stored_path="", sha256="", status="QUEUED", data_mode="sample", provider="sample")
+    assert await _pipeline_conflict(client, test_sessionmaker, "QUEUED") == 409
+
+
+async def test_pipeline_conflict_while_normalizing(client, test_sessionmaker):
+    """Regression: NORMALIZING must be treated as a running pipeline state,
+    so a second call is refused with 409 instead of racing the task."""
+    assert await _pipeline_conflict(client, test_sessionmaker, "NORMALIZING") == 409
+
+
+async def _pipeline_conflict(client, sessionmaker, status: str) -> int:
+    async with sessionmaker() as session:
+        doc = Document(
+            filename=f"{status.lower()}.pdf",
+            stored_path="",
+            sha256="",
+            status=status,
+            data_mode="sample",
+            provider="sample",
+        )
         session.add(doc)
         await session.commit()
         doc_id = doc.id
 
     r = await client.post(f"/api/documents/{doc_id}/pipeline")
-    assert r.status_code == 409
     assert r.json()["error"]["code"] == "conflict"
+    return r.status_code
 
 
 async def test_documents_stats_mode_counts(client, test_sessionmaker):
@@ -135,3 +156,78 @@ async def test_documents_stats_mode_counts(client, test_sessionmaker):
     s = r.json()
     assert s["documents_by_mode"] == {"sample": 1, "fixture": 1}
     assert s["data_mode"] in ("sample", "live-llm")
+
+
+async def test_stage_500_does_not_leak_internals(client, test_sessionmaker):
+    """Regression (F-2): a failing stage endpoint must return the standard
+    error envelope with a generic message — never the raw exception text,
+    traceback, or an absolute server path (e.g. the upload dir)."""
+    async with test_sessionmaker() as session:
+        doc = Document(
+            filename="broken.pdf",
+            stored_path="missing-file.pdf",  # nothing on disk -> FileNotFoundError
+            sha256="",
+            status="UPLOADED",
+            data_mode="sample",
+            provider="sample",
+        )
+        session.add(doc)
+        await session.commit()
+        doc_id = doc.id
+
+    r = await client.post(f"/api/documents/{doc_id}/process")
+    assert r.status_code == 500
+    body = r.json()
+    assert body["error"]["code"] == "internal_error"
+    assert body["error"]["message"] == "An unexpected error occurred."
+
+    raw = r.text
+    assert str(settings.upload_dir) not in raw          # no absolute server path
+    assert "data/uploads" not in raw
+    assert "Traceback" not in raw                       # no traceback
+    assert "FileNotFoundError" not in raw               # no exception class
+    assert "[Errno" not in raw
+    assert "Stored PDF missing" not in raw              # no raw exception text
+
+    # The sanitised message is also what persists on the document row.
+    r = await client.get(f"/api/documents/{doc_id}")
+    assert r.status_code == 200
+    assert r.json()["status"] == "FAILED"
+    assert r.json()["error_message"] == "An unexpected error occurred."
+
+
+async def test_pipeline_failure_sanitizes_stored_error(client, test_sessionmaker):
+    """Regression (F-2): the background pipeline must not persist raw exception
+    text on the document row or in the (public) processing log when those values
+    are returned through the API."""
+    async with test_sessionmaker() as session:
+        doc = Document(
+            filename="broken-pipeline.pdf",
+            stored_path="missing-file.pdf",
+            sha256="",
+            status="UPLOADED",
+            data_mode="sample",
+            provider="sample",
+        )
+        session.add(doc)
+        await session.commit()
+        doc_id = doc.id
+
+    summary = await run_pipeline_task(doc_id, test_sessionmaker)
+
+    assert summary["failed"] == "ingest"
+    assert summary["error"] == "An unexpected error occurred."
+
+    async with test_sessionmaker() as session:
+        doc = await session.get(Document, doc_id)
+        assert doc.status == "FAILED"
+        assert doc.error_message == "An unexpected error occurred."
+        logs = (
+            await session.execute(
+                select(ProcessingLog).where(ProcessingLog.document_id == doc_id)
+            )
+        ).scalars().all()
+        assert logs
+        assert all("FileNotFoundError" not in (log.message or "") for log in logs)
+        assert all("missing-file.pdf" not in (log.message or "") for log in logs)
+        assert all("failed" in (log.message or "") for log in logs)

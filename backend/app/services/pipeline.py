@@ -21,7 +21,12 @@ from app.services.reasoning import run_relationships_for_document
 
 # Status values that mean "a run is in progress" — the API refuses to enqueue
 # another job while any of these is set.
-RUNNING_STATUSES = {"QUEUED", "PROCESSING", "PARSING", "EXTRACTING", "EMBEDDING", "REASONING"}
+RUNNING_STATUSES = {"QUEUED", "PROCESSING", "PARSING", "EXTRACTING", "NORMALIZING", "EMBEDDING", "REASONING"}
+
+# Public-facing failure message. Raw exception detail (paths/tracebacks) is
+# written to the server log only, never stored on the document or returned via
+# the API (see F-2).
+GENERIC_ERROR = "An unexpected error occurred."
 
 PIPELINE_STAGES = (
     ("ingest", ingest_document),
@@ -68,19 +73,24 @@ async def run_pipeline_task(
                 await session.commit()
             except Exception as exc:
                 await session.rollback()
+                print(
+                    f"[api-error] pipeline stage '{stage}' failed for document {doc_id}: "
+                    f"{type(exc).__name__}: {exc}",
+                    flush=True,
+                )
                 doc = await session.get(Document, doc_id)
                 if doc is not None:
                     doc.status = "FAILED"
-                    doc.error_message = str(exc)[:2000]
+                    doc.error_message = GENERIC_ERROR
                     session.add(ProcessingLog(
                         document_id=doc.id,
                         stage="pipeline",
-                        message=f"{stage} failed: {exc}",
+                        message=f"{stage} failed",
                         meta_json={"stage": stage},
                     ))
                     await session.commit()
                 summary["failed"] = stage
-                summary["error"] = str(exc)[:500]
+                summary["error"] = GENERIC_ERROR
                 return summary
 
     # Cross-document reasoning pass so pairs between this and other docs are

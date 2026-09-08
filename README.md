@@ -15,9 +15,9 @@ LLM provider-agnostic (default Google Gemini, free tier; offline `sample` mode n
 - [x] LLM fact extraction + normalisation
 - [x] Embeddings + hybrid retrieval
 - [x] Relationship reasoning (deterministic + LLM semantics)
-- [ ] Evaluation harness + 4 demo cases
-- [ ] Completed API + React UI
-- See `docs/PROJECT_KNOWLEDGE.md` for the full roadmap.
+- [x] Evaluation harness + 4 demo cases
+- [x] Completed API + React UI
+- Full roadmap and design history are maintained in a local-only `docs/` folder (kept out of this repository).
 
 ## Setup
 
@@ -46,7 +46,7 @@ model names, and Postgres credentials — all in `.env` (never committed).
 
 ## Demo
 
-- Upload the six sample PDFs (Delhivery prospectus/AR/earnings deck; India Economic Survey / RBI AR / IMF Article IV) — they live locally in `docs/starter-datasets`.
+- Upload the six sample PDFs (Delhivery prospectus/AR/earnings deck; India Economic Survey / RBI AR / IMF Article IV); the dataset files are kept locally (not part of this repo).
 - Dashboard shows document/fact/relationship counts; Explorer lists normalised facts with source page + block;
   Relationships page shows the verdict, confidence, reasons, and side-by-side evidence.
 - The four required cases (corroboration, likely contradiction, resolved-by-context, and a deliberate extraction
@@ -65,8 +65,9 @@ model names, and Postgres credentials — all in `.env` (never committed).
    `LocalEmbeddingProvider` (`EmbeddingProvider`), selected via env and backed by a deterministic `sample` adapter,
    so the full pipeline runs with or without an API key — the core layers have zero provider code.
 
-Detailed design + every decision and its alternatives: `docs/` (ARCHITECTURE.md, DATA_MODEL.md, API.md,
-DECISIONS.md, EVALUATION.md, FAILURE_ANALYSIS.md, LEARNING_NOTES.md, INTERVIEW_PREP.md).
+Detailed design, every decision and its alternatives, and the failure analysis are maintained locally in
+`docs/` (ARCHITECTURE.md, DATA_MODEL.md, API.md, DECISIONS.md, EVALUATION.md, FAILURE_ANALYSIS.md,
+LEARNING_NOTES.md, INTERVIEW_PREP.md) and are intentionally excluded from this repository.
 
 ## Limitations
 

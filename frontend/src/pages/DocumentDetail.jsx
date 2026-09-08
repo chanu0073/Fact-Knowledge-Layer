@@ -1,9 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import api from '../api'
-import { statusBadge, dataModeBadge, groundingBadge, fmtValue } from '../utils'
-
-const RUNNING = ['QUEUED', 'PROCESSING', 'PARSING', 'EXTRACTING', 'EMBEDDING', 'REASONING']
+import { statusBadge, dataModeBadge, groundingBadge, fmtValue, PIPELINE_ACTIVE } from '../utils'
 
 export default function DocumentDetail() {
   const { id } = useParams()
@@ -22,9 +20,11 @@ export default function DocumentDetail() {
 
   useEffect(() => { refresh() }, [refresh])
 
-  // Poll while a run is in progress so the trace updates without manual refresh.
+  // Poll while a run is progressing — including the transient stage-terminal
+  // states (PARSED/EXTRACTED/NORMALIZED/EMBEDDED) that appear mid-pipeline, so
+  // polling never stops (and no false success appears) before REASONED/FAILED.
   useEffect(() => {
-    if (!doc || !RUNNING.includes(doc.status)) return undefined
+    if (!doc || !PIPELINE_ACTIVE.includes(doc.status)) return undefined
     const t = setInterval(refresh, 2000)
     return () => clearInterval(t)
   }, [doc, refresh])
@@ -54,7 +54,7 @@ export default function DocumentDetail() {
         <span>Document</span><span>→</span><span><Link to={`/facts?document_id=${doc.id}`}>Facts ({facts.length})</Link></span><span>→</span><span>Evidence blocks ({evidence.length})</span>
       </div>
 
-      {!RUNNING.includes(doc.status) && doc.status !== 'FAILED' && (
+      {!PIPELINE_ACTIVE.includes(doc.status) && doc.status !== 'FAILED' && (
         <button className="btn btn-primary mt" onClick={run}>Re-run full pipeline</button>
       )}
       {error && <div className="card mt" style={{ color: 'var(--red)' }}>{error}</div>}

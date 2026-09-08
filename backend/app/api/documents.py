@@ -25,6 +25,29 @@ from app.utils import is_valid_uuid
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
 
+_GENERIC_500 = "An unexpected error occurred."
+
+
+async def _handle_stage_failure(session: AsyncSession, doc_id: str, stage: str, exc: Exception):
+    """Sanitised stage-failure handling.
+
+    The raw exception detail is logged server-side only (stdout of the server
+    process); the document's public ``error_message`` and the raised 500 body
+    carry a fixed generic string so nothing internal (paths, tracebacks,
+    exception text) ever leaks through the API.
+    """
+    print(
+        f"[api-error] {stage} failed for document {doc_id}: {type(exc).__name__}: {exc}",
+        flush=True,
+    )
+    await session.rollback()
+    doc = await session.get(Document, doc_id)
+    if doc is not None:
+        doc.status = "FAILED"
+        doc.error_message = _GENERIC_500
+        await session.commit()
+    raise HTTPException(500, _GENERIC_500) from exc
+
 
 def _ensure_upload_dir() -> Path:
     settings.upload_dir.mkdir(parents=True, exist_ok=True)
@@ -220,13 +243,7 @@ async def process_document(doc_id: str, session: AsyncSession = Depends(get_db))
         doc = await session.get(Document, doc_id)
         return doc
     except Exception as exc:
-        await session.rollback()
-        doc = await session.get(Document, doc_id)
-        if doc:
-            doc.status = "FAILED"
-            doc.error_message = str(exc)[:2000]
-            await session.commit()
-        raise HTTPException(500, f"Processing failed: {exc}") from exc
+        await _handle_stage_failure(session, doc_id, "process", exc)
 
 
 @router.post("/{doc_id}/extract", response_model=DocumentOut)
@@ -248,13 +265,7 @@ async def extract_document(doc_id: str, session: AsyncSession = Depends(get_db))
         doc = await session.get(Document, doc_id)
         return doc
     except Exception as exc:
-        await session.rollback()
-        doc = await session.get(Document, doc_id)
-        if doc:
-            doc.status = "FAILED"
-            doc.error_message = str(exc)[:2000]
-            await session.commit()
-        raise HTTPException(500, f"Extraction failed: {exc}") from exc
+        await _handle_stage_failure(session, doc_id, "extract", exc)
 
 
 @router.post("/{doc_id}/normalize", response_model=DocumentOut)
@@ -274,13 +285,7 @@ async def normalize_document(doc_id: str, session: AsyncSession = Depends(get_db
         doc = await session.get(Document, doc_id)
         return doc
     except Exception as exc:
-        await session.rollback()
-        doc = await session.get(Document, doc_id)
-        if doc:
-            doc.status = "FAILED"
-            doc.error_message = str(exc)[:2000]
-            await session.commit()
-        raise HTTPException(500, f"Normalisation failed: {exc}") from exc
+        await _handle_stage_failure(session, doc_id, "normalize", exc)
 
 
 @router.post("/{doc_id}/embed", response_model=DocumentOut)
@@ -302,13 +307,7 @@ async def embed_document_endpoint(doc_id: str, session: AsyncSession = Depends(g
         doc = await session.get(Document, doc_id)
         return doc
     except Exception as exc:
-        await session.rollback()
-        doc = await session.get(Document, doc_id)
-        if doc:
-            doc.status = "FAILED"
-            doc.error_message = str(exc)[:2000]
-            await session.commit()
-        raise HTTPException(500, f"Embedding failed: {exc}") from exc
+        await _handle_stage_failure(session, doc_id, "embed", exc)
 
 
 @router.post("/{doc_id}/reason", response_model=DocumentOut)
@@ -330,10 +329,4 @@ async def reason_document(doc_id: str, session: AsyncSession = Depends(get_db)) 
         doc = await session.get(Document, doc_id)
         return doc
     except Exception as exc:
-        await session.rollback()
-        doc = await session.get(Document, doc_id)
-        if doc:
-            doc.status = "FAILED"
-            doc.error_message = str(exc)[:2000]
-            await session.commit()
-        raise HTTPException(500, f"Reasoning failed: {exc}") from exc
+        await _handle_stage_failure(session, doc_id, "reason", exc)
