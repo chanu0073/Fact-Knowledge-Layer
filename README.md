@@ -144,17 +144,17 @@ intentionally excluded from this repository.
 - Per-page fact lists validate all-or-nothing: one malformed fact discards the page (logged).
 - The L1 reasoner does not read `scope`/`geography` — Consolidated vs Standalone pairs are not separated.
 - No currency conversion, metric-synonym resolution, or upload-content deduplication.
-- The 3% value tolerance is fixed, and confidence is not calibrated against a large corpus (4 demo cases).
+- The 3% value tolerance is fixed, and confidence has not been calibrated against a large production-scale corpus.
 - Batch processing is in-process/async; no external task queue.
-- Free-tier Gemini rate limits apply; use `sample` mode for offline, cost-free runs.
+- Free-tier Gemini rate limits apply; sample mode provides a deterministic offline alternative.
 
 **Next steps**
 
 - OCR for scanned pages; per-fact salvage instead of whole-page validation.
 - A scope/geography-aware comparability gate; currency + metric-synonym resolution.
-- Calibrate tolerance/confidence on a larger corpus; move processing to a real task queue (Celery/Redis).
-- Content dedup and pagination for large fact/relationship listings.
-- Run the starter PDFs through live Gemini extraction so all four cases resolve on the real corpus.
+- Calibrate tolerance/confidence on a larger corpus; move processing to a real task queue.
+- Content deduplication and pagination for large fact/relationship listings.
+- Validate the four evaluation cases end-to-end with live Gemini extraction on the real starter corpus.
 
 ## Additional Notes
 
