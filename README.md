@@ -1,11 +1,12 @@
 # Fact Knowledge Layer
 
-A general-purpose **knowledge layer** for financial/enterprise documents: ingest PDFs, extract evidence-grounded,
+A **document intelligence knowledge layer for financial and enterprise PDFs**: ingest PDFs, extract evidence-grounded,
 normalised facts, and discover cross-document relationships (`CORROBORATES`,
 `LIKELY_CONTRADICTION`, `APPARENT_CONTRADICTION_RESOLVED`, `UNCERTAIN`).
 
 Built for the **Superjoin VIT 2026 Engineering Intern** assignment. Stack: React + FastAPI + PostgreSQL (pgvector),
-LLM provider-agnostic (default Google Gemini, free tier; offline `sample` mode needs no API key).
+LLM provider-agnostic (default Google Gemini, free tier; offline `sample` mode needs no API key). Runs locally — no
+deployment is included.
 
 ## Setup and Run Instructions
 
@@ -18,7 +19,7 @@ docker compose up -d db
 # 2) Backend
 cd backend
 python -m venv .venv && .venv/bin/pip install -r requirements.txt
-cp ../.env.example .env        # fill GEMINI_API_KEY only if you want live mode; sample works without it
+cp ../.env.example .env        # fill GEMINI_API_KEY only for live mode; sample works without it
 POSTGRES_HOST=localhost .venv/bin/uvicorn app.main:app --reload --port 8000
 # API docs → http://localhost:8000/docs
 
@@ -31,32 +32,51 @@ cd ../backend
 POSTGRES_HOST=localhost .venv/bin/python -m pytest    # 94 passed
 ```
 
-**Accepting new PDFs** — via the UI (Documents → upload) or the API:
-`POST /api/documents/upload` (multipart `files`). Each upload lands as an `UPLOADED` row; process it with
-`POST /api/documents/{id}/pipeline` (202 + `QUEUED`, then poll status until `REASONED`/`FAILED`) or the **Re-run
-full pipeline** button on the document page. Reproduce the demo corpus + the four evaluation cases offline:
+Environment: `LLM_PROVIDER` / `EMBEDDING_PROVIDER` (`gemini | ollama | sample`), model names, and Postgres
+credentials — all in `.env` (never committed; only `.env.example` with placeholders is checked in).
+
+## Quick Evaluation
 
 ```bash
-cd backend && LLM_PROVIDER=sample EMBEDDING_PROVIDER=sample POSTGRES_HOST=localhost \
-  .venv/bin/python -m scripts.run_pipeline "<pdf1>" "<pdf2>" ...   # ingest the six starter PDFs
-LLM_PROVIDER=sample POSTGRES_HOST=localhost .venv/bin/python -m scripts.register_cases
-LLM_PROVIDER=sample POSTGRES_HOST=localhost .venv/bin/python -m scripts.evaluate
+docker compose up -d db
+cd backend  && POSTGRES_HOST=localhost .venv/bin/uvicorn app.main:app --reload --port 8000
+cd ../frontend && npm install && npm run dev
 ```
 
-Environment (`LLM_PROVIDER` / `EMBEDDING_PROVIDER` ∈ `gemini | ollama | sample`), model names, and Postgres
-credentials all live in `.env` (never committed — only `.env.example` is checked in, with placeholders).
+1. Open http://localhost:5173 → **Documents** → upload any PDF (or `POST /api/documents/upload` with a
+   `files` field).
+2. Open the document → **Re-run full pipeline** → watch the status advance `PARSING → … → REASONED`
+   (or `POST /api/documents/{id}/pipeline`, then poll `GET /api/documents/{id}`).
+3. Inspect the results the assignment asks for:
+   - **Facts** — extracted, normalised rows (`/api/facts`)
+   - **Source evidence** — page/block traces each fact points back to (`/api/documents/{id}/evidence`,
+     `/api/documents/{id}/logs`)
+   - **Cross-document relationships** — verdicts with reasons (`/api/relationships`)
+   - **Evaluation** — the four required cases (`/api/evaluation/results`); re-run offline with
+     `python -m scripts.register_cases` + `python -m scripts.evaluate` (sample mode).
 
 ## Video Demo
 
 Demo video (≤ 3 min): **`[PASTE YOUR YOUTUBE/DRIVE LINK HERE]`**
 
-It shows: uploading a PDF through the UI → the pipeline progressing stage-by-stage
-(`PARSING → … → REASONING`) → the dashboard with document/fact/relationship counts → a document trace down to
-evidence blocks → relationship verdicts with reasons → the four assignment cases on the **Assignment Cases**
-page (case 2 resolves live on the sample corpus; the deterministic harness and test suite prove cases 1, 3 and 4
-offline, see *Additional Notes*).
+The video shows: uploading a PDF → pipeline progressing stage-by-stage → the dashboard →
+a fact traced to its evidence block → a relationship verdict with reasons → the four required evaluation cases
+(case 2 demonstrated live in sample mode; cases 1–4 verified through the deterministic harness and test suite).
 
 ## Approach
+
+```mermaid
+flowchart LR
+    PDF[PDF upload] --> EV[Evidence store<br/>page/block rows]
+    EV --> FE[Fact extraction<br/>LLM abstraction]
+    FE --> NORM[Normalization<br/>value / unit / period]
+    NORM --> EMB[Embeddings<br/>pgvector HNSW]
+    EMB --> RETR[Hybrid retrieval<br/>candidate pairs]
+    RETR --> L1[L1 - deterministic checks]
+    L1 --> L2[L2 - LLM semantics]
+    L2 --> L3[L3 - final decision<br/>verdict + confidence]
+    L3 --> API[REST API / React UI]
+```
 
 1. **Evidence-first:** every PDF is parsed (pdfplumber + PyMuPDF) into page/block `evidence` rows. A fact exists only
    if it traces to evidence.
@@ -65,64 +85,79 @@ offline, see *Additional Notes*).
    documents converge on one representation.
 3. **Retrieval ≠ reasoning:** pgvector (HNSW) similarity finds *candidate* fact pairs; the verdict comes from layered
    reasoning — L1 deterministic checks (entity/metric/period/scope/value after normalisation) → L2 LLM semantics for
-   ambiguity → L3 final decision. `UNCERTAIN` beats a confident guess.
+   ambiguity → L3 final decision.
 4. **Provider abstraction:** `GeminiProvider` / `OllamaProvider` (`LLMProvider`) and `GeminiEmbeddingProvider` /
-   `LocalEmbeddingProvider` (`EmbeddingProvider`), selected via env and backed by a deterministic `sample` adapter,
-   so the full pipeline runs with or without an API key — the core layers have zero provider code.
-5. **API + UI over the same model:** a uniform REST API (single error envelope, per-document provenance endpoints,
-   background pipeline with status polling) and a React SPA that is a lossless projection of it.
+   `LocalEmbeddingProvider` (`EmbeddingProvider`) are selected via env and backed by a deterministic `sample` adapter.
+   The pipeline runs with or without an API key; the core layers contain zero provider code.
+5. **Provenance everywhere:** documents, facts, evidence, relationships, and evaluation rows all reference each
+   other, and every relationship carries a human-readable reason.
+6. **Sanitized errors:** 500 responses and the persisted `error_message` carry a fixed generic message; raw detail is
+   logged server-side only — nothing internal (paths, tracebacks) leaks through the API.
+
+### Three separate concepts: verdicts, outcomes, cases
+
+- **Relationship verdicts** classify a *fact pair*: `CORROBORATES` (agree within tolerance),
+  `LIKELY_CONTRADICTION` (unresolved clash), `APPARENT_CONTRADICTION_RESOLVED` (looks contradictory, a qualifier
+  explains it), `UNCERTAIN` (not safely comparable).
+- **Evaluation outcomes** classify a *case against its expected label*: `PASS` / `FAIL` / `PENDING` /
+  `NOT_REGISTERED` — one axis, deliberately kept separate from verdicts so `UNCERTAIN` can be a passing verdict.
+- **The four required evaluation cases** are the assignment deliverables, defined in
+  `backend/app/evaluation/cases.py` and used by both the registration script and the test suite (so the harness
+  cannot drift from the definitions): **1)** Delhivery FY24 revenue corroborates across the annual report and the
+  earnings deck; **2)** a controlled synthetic fixture asserts the same revenue as two different numbers →
+  contradiction; **3)** India GDP growth differs because it is an FY25 actual vs an FY26 projection →
+  resolved by context; **4)** the prospectus multi-period table is a known extraction failure → the reasoner must
+  refuse with `UNCERTAIN`.
+
+Verified status in sample mode: **case 2** resolves live against its controlled synthetic fixture; **all four
+cases** are deterministically verified by the evaluation harness/controlled fixtures in the test suite
+(`tests/test_evaluation.py`, `tests/test_reasoning.py`). **Gemini-backed extraction is the intended higher-fidelity
+live path** — with suitable Gemini quota, cases 1, 3 and 4 are expected to resolve against the real starter corpus
+(not yet verified live). In the verified offline environment, all four case verdict shapes are covered by
+deterministic fixtures/tests.
 
 **Important decisions and trade-offs**
 
-- *Honesty over hallucination:* every refusal path (`UNCERTAIN`, multi-period table Case 4, differing currencies)
-  is stated openly with reasons, never silently guessed.
-- *Deterministic sample mode* was rebuilt (not stubbed) so the entire pipeline, all tests, and 1 of 4 live demo cases
-  run with **no API key**; live Gemini is an env switch away.
-- *Background task instead of an external queue:* in-process async + 2-second polling is deliberately simple for this
-  scale; the task owns its own injectable session so tests exercise the real pipeline.
-- *Public errors are sanitized:* 500s and stored `error_message` carry a fixed generic message; raw detail is
-  server-log only — nothing internal (paths/tracebacks) leaks through the API.
-- *Synthetic fixtures for evaluation:* a clearly-labelled fixture proves the contradiction verdict offline; the other
-  three verdict shapes are pinned by deterministic tests against a controlled corpus.
+- *UNCERTAIN over unsupported confidence:* every refusal path (multi-period tables, differing currencies, weak
+  evidence) is stated openly with reasons, never silently guessed.
+- *Deterministic sample mode* was rebuilt (not stubbed) so the whole pipeline, the tests, and demo cases run with no
+  API key — a genuine offline engineering capability, not a test-only fallback.
+- *Background task instead of an external queue:* in-process async + status polling is deliberately simple at this
+  scale; the task owns an injectable session so tests exercise the real pipeline.
+- *Synthetic fixtures for evaluation:* one clearly-labelled fixture proves the contradiction verdict offline; the
+  other three cases are pinned by deterministic tests.
 
-**AI tools used** — an AI pair-programming assistant (opencode) was used for scaffolding, implementation, writing
-tests, and documentation across all phases; all code and test results were reviewed and verified by running the
-suite and builds. At *runtime* the system is AI-optional: the bundled `sample` provider is deterministic, and the
-four demo verdict shapes are reproducible without any external API.
+**AI tools used** — an AI pair-programming assistant (OpenCode) was used for scaffolding, implementation, tests, and
+documentation. **I made the implementation decisions, reviewed every change, and verified behavior through the test
+suite, production builds, and end-to-end runs on the dev corpus.** At runtime the system is AI-optional: the bundled
+`sample` provider is deterministic, and the required evaluation cases are reproducible without any external API.
 
-Detailed design, alternatives, and the failure analysis are maintained in a local-only `docs/` folder
-(ARCHITECTURE.md, DATA_MODEL.md, API.md, DECISIONS.md, EVALUATION.md, FAILURE_ANALYSIS.md, LEARNING_NOTES.md,
-INTERVIEW_PREP.md) and are intentionally excluded from this repository.
+Detailed design, alternatives, and the failure analysis live in a local-only `docs/` folder (ARCHITECTURE.md,
+DATA_MODEL.md, API.md, DECISIONS.md, EVALUATION.md, FAILURE_ANALYSIS.md, LEARNING_NOTES.md, INTERVIEW_PREP.md),
+intentionally excluded from this repository.
 
 ## Limitations and Next Steps
 
 **Limitations**
 
-- Free-tier Gemini rate limits; tests and the default demo use `sample` mode to avoid live-token cost.
 - Scanned (image-only) pages cannot be text-extracted reliably (no OCR).
-- Multi-period table extraction (Case 4) is a known, deliberately `UNCERTAIN` failure mode.
-- Batch processing is in-process/async; no external task queue.
+- Per-page fact lists validate all-or-nothing: one malformed fact discards the page (logged).
+- The L1 reasoner does not read `scope`/`geography` — Consolidated vs Standalone pairs are not separated.
+- No currency conversion, metric-synonym resolution, or upload-content deduplication.
 - The 3% value tolerance is fixed, and confidence is not calibrated against a large corpus (4 demo cases).
-- The L1 reasoner does not read `scope`/`geography` (Consolidated vs Standalone pairs are not separated).
-- No currency conversion or metric-synonym resolution; no upload-content deduplication.
+- Batch processing is in-process/async; no external task queue.
+- Free-tier Gemini rate limits apply; use `sample` mode for offline, cost-free runs.
 
 **Next steps**
 
-- OCR for scanned pages and per-fact salvage instead of all-or-nothing page validation.
+- OCR for scanned pages; per-fact salvage instead of whole-page validation.
 - A scope/geography-aware comparability gate; currency + metric-synonym resolution.
-- Calibrate tolerance/confidence on a larger corpus; move the pipeline onto a real task queue (Celery/Redis).
-- Content dedup on upload and pagination for large fact/relationship listings.
-- Run the six starter PDFs through live Gemini extraction so all four cases resolve on the real corpus.
+- Calibrate tolerance/confidence on a larger corpus; move processing to a real task queue (Celery/Redis).
+- Content dedup and pagination for large fact/relationship listings.
+- Run the starter PDFs through live Gemini extraction so all four cases resolve on the real corpus.
 
 ## Additional Notes
 
-- Results contain, per document: extracted **facts** with value/unit/period, **source evidence** (page + block), and
-  **cross-document relationships** with verdict, confidence, and a human-readable reason.
-- The four required cases are defined in `backend/app/evaluation/cases.py` — used by both the registration script and
-  the test suite so the harness cannot drift from the definitions. Sample mode resolves **case 2** (contradiction)
-  live against its synthetic fixture; **cases 1 (corroborate), 3 (resolved), and 4 (uncertain)** need the cleaner
-  facts that Gemini extraction produces and are instead proven deterministically by
-  `backend/tests/test_evaluation.py` and `test_reasoning.py` (all four verdict shapes).
 - `data_mode` (`sample` / `live-llm` / `fixture`) is stamped on every document so sample and live corpora are never
   silently conflated in the UI.
 - Structure: `backend/app/` — FastAPI + async SQLAlchemy; `frontend/src/` — React (Vite) SPA; `backend/tests/` —
